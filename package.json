@@ -2,6 +2,7 @@
   "name": "mcp-jupyter-complete",
   "version": "1.0.0",
   "description": "Complete MCP server for Jupyter notebook manipulation with position-based operations and VS Code integration",
+  "type": "module",
   "main": "src/index.js",
   "bin": {
     "mcp-jupyter-complete": "src/index.js"
