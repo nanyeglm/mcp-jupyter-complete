@@ -1,0 +1,44 @@
+{
+  "name": "mcp-jupyter-complete",
+  "version": "1.0.0",
+  "description": "Complete MCP server for Jupyter notebook manipulation with position-based operations and VS Code integration",
+  "main": "src/index.js",
+  "bin": {
+    "mcp-jupyter-complete": "src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --inspect src/index.js",
+    "test": "node test/test.js",
+    "lint": "eslint src/"
+  },
+  "keywords": [
+    "mcp",
+    "jupyter",
+    "notebook",
+    "vscode",
+    "ai",
+    "claude"
+  ],
+  "author": "tofunori",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.6.0",
+    "fs-extra": "^11.2.0",
+    "chokidar": "^4.0.1"
+  },
+  "devDependencies": {
+    "eslint": "^9.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tofunori/mcp-jupyter-complete.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tofunori/mcp-jupyter-complete/issues"
+  },
+  "homepage": "https://github.com/tofunori/mcp-jupyter-complete#readme"
+}
