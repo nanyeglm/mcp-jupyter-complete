@@ -140,10 +140,22 @@ export class JupyterHandler {
     const notebook = await this.readNotebook(notebookPath);
     this.validateCellIndex(notebook.cells, cellIndex);
     
-    // Convert string to array format if needed
-    const sourceArray = newSource.split('\n').map(line => line + '\n');
-    if (sourceArray.length > 0 && sourceArray[sourceArray.length - 1] === '\n') {
-      sourceArray[sourceArray.length - 1] = sourceArray[sourceArray.length - 1].slice(0, -1);
+    // Convert string to array format - each line should end with \n except the last
+    const lines = newSource.split('\n');
+    const sourceArray = lines.map((line, index) => {
+      // Add \n to all lines except the last one, unless the original ended with \n
+      if (index === lines.length - 1) {
+        // Last line: only add \n if original text ended with \n (detected by empty last element)
+        return line === '' ? '' : line;
+      } else {
+        // All other lines get \n
+        return line + '\n';
+      }
+    });
+    
+    // Remove empty last element if original ended with \n
+    if (sourceArray.length > 1 && sourceArray[sourceArray.length - 1] === '') {
+      sourceArray.pop();
     }
     
     notebook.cells[cellIndex].source = sourceArray;
@@ -167,9 +179,24 @@ export class JupyterHandler {
       throw new Error(`Invalid position ${position}. Must be between 0 and ${notebook.cells.length}`);
     }
     
-    const sourceArray = source ? source.split('\n').map(line => line + '\n') : [''];
-    if (sourceArray.length > 0 && sourceArray[sourceArray.length - 1] === '\n') {
-      sourceArray[sourceArray.length - 1] = sourceArray[sourceArray.length - 1].slice(0, -1);
+    // Convert string to array format - each line should end with \n except the last
+    let sourceArray;
+    if (!source) {
+      sourceArray = [''];
+    } else {
+      const lines = source.split('\n');
+      sourceArray = lines.map((line, index) => {
+        if (index === lines.length - 1) {
+          return line === '' ? '' : line;
+        } else {
+          return line + '\n';
+        }
+      });
+      
+      // Remove empty last element if original ended with \n
+      if (sourceArray.length > 1 && sourceArray[sourceArray.length - 1] === '') {
+        sourceArray.pop();
+      }
     }
     
     const newCell = {
@@ -302,9 +329,19 @@ export class JupyterHandler {
             if (op.cell_index < 0 || op.cell_index >= notebook.cells.length) {
               throw new Error(`Invalid cell index ${op.cell_index}`);
             }
-            const sourceArray = op.new_source.split('\n').map(line => line + '\n');
-            if (sourceArray.length > 0 && sourceArray[sourceArray.length - 1] === '\n') {
-              sourceArray[sourceArray.length - 1] = sourceArray[sourceArray.length - 1].slice(0, -1);
+            // Convert string to array format - each line should end with \n except the last
+            const lines = op.new_source.split('\n');
+            const sourceArray = lines.map((line, index) => {
+              if (index === lines.length - 1) {
+                return line === '' ? '' : line;
+              } else {
+                return line + '\n';
+              }
+            });
+            
+            // Remove empty last element if original ended with \n
+            if (sourceArray.length > 1 && sourceArray[sourceArray.length - 1] === '') {
+              sourceArray.pop();
             }
             notebook.cells[op.cell_index].source = sourceArray;
             break;
