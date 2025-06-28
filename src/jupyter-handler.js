@@ -109,10 +109,10 @@ export class JupyterHandler {
       content: [
         {
           type: "text",
-          text: `Notebook: ${notebookPath}\\nTotal cells: ${cellsInfo.length}\\n\\n${
+          text: `Notebook: ${notebookPath}\nTotal cells: ${cellsInfo.length}\n\n${
             cellsInfo.map(cell => 
               `[${cell.index}] ${cell.type}: ${cell.preview}`
-            ).join('\\n')
+            ).join('\n')
           }`
         }
       ]
@@ -141,8 +141,8 @@ export class JupyterHandler {
     this.validateCellIndex(notebook.cells, cellIndex);
     
     // Convert string to array format if needed
-    const sourceArray = newSource.split('\\n').map(line => line + '\\n');
-    if (sourceArray.length > 0 && sourceArray[sourceArray.length - 1] === '\\n') {
+    const sourceArray = newSource.split('\n').map(line => line + '\n');
+    if (sourceArray.length > 0 && sourceArray[sourceArray.length - 1] === '\n') {
       sourceArray[sourceArray.length - 1] = sourceArray[sourceArray.length - 1].slice(0, -1);
     }
     
@@ -167,8 +167,8 @@ export class JupyterHandler {
       throw new Error(`Invalid position ${position}. Must be between 0 and ${notebook.cells.length}`);
     }
     
-    const sourceArray = source ? source.split('\\n').map(line => line + '\\n') : [''];
-    if (sourceArray.length > 0 && sourceArray[sourceArray.length - 1] === '\\n') {
+    const sourceArray = source ? source.split('\n').map(line => line + '\n') : [''];
+    if (sourceArray.length > 0 && sourceArray[sourceArray.length - 1] === '\n') {
       sourceArray[sourceArray.length - 1] = sourceArray[sourceArray.length - 1].slice(0, -1);
     }
     
@@ -302,8 +302,8 @@ export class JupyterHandler {
             if (op.cell_index < 0 || op.cell_index >= notebook.cells.length) {
               throw new Error(`Invalid cell index ${op.cell_index}`);
             }
-            const sourceArray = op.new_source.split('\\n').map(line => line + '\\n');
-            if (sourceArray.length > 0 && sourceArray[sourceArray.length - 1] === '\\n') {
+            const sourceArray = op.new_source.split('\n').map(line => line + '\n');
+            if (sourceArray.length > 0 && sourceArray[sourceArray.length - 1] === '\n') {
               sourceArray[sourceArray.length - 1] = sourceArray[sourceArray.length - 1].slice(0, -1);
             }
             notebook.cells[op.cell_index].source = sourceArray;
@@ -348,14 +348,14 @@ export class JupyterHandler {
     ];
     
     if (errors.length > 0) {
-      resultText.push(`\\nErrors:\\n${errors.join('\\n')}`);
+      resultText.push(`\nErrors:\n${errors.join('\n')}`);
     }
     
     return {
       content: [
         {
           type: "text",
-          text: resultText.join('\\n')
+          text: resultText.join('\n')
         }
       ]
     };
@@ -366,30 +366,30 @@ export class JupyterHandler {
     
     const cellsContent = notebook.cells.map((cell, index) => {
       const source = Array.isArray(cell.source) ? cell.source.join('') : cell.source;
-      let content = `Cell with ID: ${cell.id || index}\\n${source}`;
+      let content = `Cell with ID: ${cell.id || index}\n${source}`;
       
       // Add outputs if it's a code cell with outputs
       if (cell.cell_type === 'code' && cell.outputs && cell.outputs.length > 0) {
-        content += '\\nOutput of cell ' + (cell.id || index) + ':';
+        content += '\nOutput of cell ' + (cell.id || index) + ':';
         
         for (const output of cell.outputs) {
           if (output.output_type === 'stream') {
             const text = Array.isArray(output.text) ? output.text.join('') : output.text;
-            content += '\\n' + text;
+            content += '\n' + text;
           } else if (output.output_type === 'execute_result' || output.output_type === 'display_data') {
             if (output.data) {
               if (output.data['text/plain']) {
                 const text = Array.isArray(output.data['text/plain']) 
                   ? output.data['text/plain'].join('')
                   : output.data['text/plain'];
-                content += '\\n' + text;
+                content += '\n' + text;
               }
               if (output.data['image/png']) {
-                content += '\\n[Image output available]';
+                content += '\n[Image output available]';
               }
             }
           } else if (output.output_type === 'error') {
-            content += '\\nError: ' + output.ename + ': ' + output.evalue;
+            content += '\nError: ' + output.ename + ': ' + output.evalue;
           }
         }
       }
@@ -401,7 +401,7 @@ export class JupyterHandler {
       content: [
         {
           type: "text",
-          text: cellsContent.join('\\n\\n')
+          text: cellsContent.join('\n\n')
         }
       ]
     };
@@ -507,7 +507,7 @@ export class JupyterHandler {
       await this.writeNotebook(notebookPath, notebook);
 
       // Format output for display
-      let outputText = `Executed cell ${cellId}\\n`;
+      let outputText = `Executed cell ${cellId}\n`;
       
       if (reply.content.status === 'error') {
         outputText += `Error: ${reply.content.ename}: ${reply.content.evalue}`;
@@ -515,15 +515,15 @@ export class JupyterHandler {
         outputText += `Execution completed successfully`;
         
         if (outputs.length > 0) {
-          outputText += '\\n\\nOutputs:';
+          outputText += '\n\nOutputs:';
           outputs.forEach((output, i) => {
             if (output.text) {
-              outputText += `\\n${Array.isArray(output.text) ? output.text.join('') : output.text}`;
+              outputText += `\n${Array.isArray(output.text) ? output.text.join('') : output.text}`;
             } else if (output.data && output.data['text/plain']) {
               const text = Array.isArray(output.data['text/plain']) 
                 ? output.data['text/plain'].join('')
                 : output.data['text/plain'];
-              outputText += `\\n${text}`;
+              outputText += `\n${text}`;
             }
           });
         }
