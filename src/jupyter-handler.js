@@ -1,9 +1,66 @@
 import fs from 'fs-extra';
 import path from 'path';
+import { ServiceManager } from '@jupyterlab/services';
+import { PageConfig } from '@jupyterlab/coreutils';
 
 export class JupyterHandler {
   constructor() {
     this.supportedCellTypes = ['code', 'markdown', 'raw'];
+    this.kernelManager = null;
+    this.sessionManager = null;
+    this.kernelSessions = new Map(); // Map notebook paths to kernel sessions
+    this.initializeServices();
+  }
+
+  async initializeServices() {
+    try {
+      // Set up minimal page config for Jupyter services
+      PageConfig.setOption('baseUrl', 'http://localhost:8888/');
+      PageConfig.setOption('wsUrl', 'ws://localhost:8888/');
+      
+      // Create service manager
+      this.serviceManager = new ServiceManager();
+      this.kernelManager = this.serviceManager.kernels;
+      this.sessionManager = this.serviceManager.sessions;
+      
+      console.error('[Jupyter Handler] Services initialized');
+    } catch (error) {
+      console.error('[Jupyter Handler] Failed to initialize services:', error.message);
+      // Continue without kernel support if initialization fails
+    }
+  }
+
+  async getKernelSession(notebookPath) {
+    if (!this.sessionManager) {
+      throw new Error('Jupyter services not initialized. Please ensure Jupyter server is running.');
+    }
+
+    // Check if we already have a session for this notebook
+    if (this.kernelSessions.has(notebookPath)) {
+      const session = this.kernelSessions.get(notebookPath);
+      if (session.kernel && !session.kernel.isDisposed) {
+        return session;
+      } else {
+        // Clean up disposed session
+        this.kernelSessions.delete(notebookPath);
+      }
+    }
+
+    try {
+      // Create a new session
+      const session = await this.sessionManager.startNew({
+        path: notebookPath,
+        type: 'notebook',
+        name: path.basename(notebookPath),
+        kernel: { name: 'python3' }
+      });
+
+      this.kernelSessions.set(notebookPath, session);
+      console.error(`[Jupyter Handler] Created new kernel session for ${notebookPath}`);
+      return session;
+    } catch (error) {
+      throw new Error(`Failed to create kernel session: ${error.message}`);
+    }
   }
 
   async readNotebook(notebookPath) {
@@ -302,5 +359,239 @@ export class JupyterHandler {
         }
       ]
     };
+  }
+
+  async readNotebookWithOutputs(notebookPath) {
+    const notebook = await this.readNotebook(notebookPath);
+    
+    const cellsContent = notebook.cells.map((cell, index) => {
+      const source = Array.isArray(cell.source) ? cell.source.join('') : cell.source;
+      let content = `Cell with ID: ${cell.id || index}\\n${source}`;
+      
+      // Add outputs if it's a code cell with outputs
+      if (cell.cell_type === 'code' && cell.outputs && cell.outputs.length > 0) {
+        content += '\\nOutput of cell ' + (cell.id || index) + ':';
+        
+        for (const output of cell.outputs) {
+          if (output.output_type === 'stream') {
+            const text = Array.isArray(output.text) ? output.text.join('') : output.text;
+            content += '\\n' + text;
+          } else if (output.output_type === 'execute_result' || output.output_type === 'display_data') {
+            if (output.data) {
+              if (output.data['text/plain']) {
+                const text = Array.isArray(output.data['text/plain']) 
+                  ? output.data['text/plain'].join('')
+                  : output.data['text/plain'];
+                content += '\\n' + text;
+              }
+              if (output.data['image/png']) {
+                content += '\\n[Image output available]';
+              }
+            }
+          } else if (output.output_type === 'error') {
+            content += '\\nError: ' + output.ename + ': ' + output.evalue;
+          }
+        }
+      }
+      
+      return content;
+    });
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: cellsContent.join('\\n\\n')
+        }
+      ]
+    };
+  }
+
+  async executeCell(notebookPath, cellId) {
+    try {
+      const notebook = await this.readNotebook(notebookPath);
+      
+      // Find cell by ID or index
+      let cellIndex = -1;
+      let cell = null;
+      
+      if (typeof cellId === 'string') {
+        // Search by cell ID
+        cellIndex = notebook.cells.findIndex(c => c.id === cellId);
+        if (cellIndex === -1) {
+          throw new Error(`Cell with ID '${cellId}' not found`);
+        }
+      } else {
+        // Treat as index
+        cellIndex = cellId;
+        this.validateCellIndex(notebook.cells, cellIndex);
+      }
+      
+      cell = notebook.cells[cellIndex];
+      
+      if (cell.cell_type !== 'code') {
+        throw new Error(`Cell ${cellId} is not a code cell (type: ${cell.cell_type})`);
+      }
+
+      // Get kernel session
+      const session = await this.getKernelSession(notebookPath);
+      const kernel = session.kernel;
+
+      if (!kernel) {
+        throw new Error('No kernel available for execution');
+      }
+
+      // Get cell source
+      const source = Array.isArray(cell.source) ? cell.source.join('') : cell.source;
+      
+      if (!source.trim()) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Cell is empty, nothing to execute"
+            }
+          ]
+        };
+      }
+
+      // Execute the code
+      const future = kernel.requestExecute({ code: source });
+      const outputs = [];
+      let executionCount = null;
+
+      // Collect outputs
+      future.onIOPub = (msg) => {
+        if (msg.header.msg_type === 'execute_result' || 
+            msg.header.msg_type === 'display_data' ||
+            msg.header.msg_type === 'stream' ||
+            msg.header.msg_type === 'error') {
+          outputs.push(msg.content);
+        }
+        
+        if (msg.header.msg_type === 'execute_input') {
+          executionCount = msg.content.execution_count;
+        }
+      };
+
+      // Wait for execution to complete
+      const reply = await future.done;
+      
+      // Update cell in notebook
+      cell.execution_count = executionCount;
+      cell.outputs = outputs.map(output => {
+        // Convert Jupyter message format to notebook format
+        if (output.output_type) {
+          return output;
+        } else {
+          // Handle different message types
+          const notebookOutput = {
+            output_type: reply.content.status === 'error' ? 'error' : 'execute_result'
+          };
+          
+          if (output.data) {
+            notebookOutput.data = output.data;
+            notebookOutput.metadata = output.metadata || {};
+            notebookOutput.execution_count = executionCount;
+          } else if (output.text) {
+            notebookOutput.output_type = 'stream';
+            notebookOutput.name = 'stdout';
+            notebookOutput.text = output.text;
+          }
+          
+          return notebookOutput;
+        }
+      });
+
+      // Save updated notebook
+      await this.writeNotebook(notebookPath, notebook);
+
+      // Format output for display
+      let outputText = `Executed cell ${cellId}\\n`;
+      
+      if (reply.content.status === 'error') {
+        outputText += `Error: ${reply.content.ename}: ${reply.content.evalue}`;
+      } else {
+        outputText += `Execution completed successfully`;
+        
+        if (outputs.length > 0) {
+          outputText += '\\n\\nOutputs:';
+          outputs.forEach((output, i) => {
+            if (output.text) {
+              outputText += `\\n${Array.isArray(output.text) ? output.text.join('') : output.text}`;
+            } else if (output.data && output.data['text/plain']) {
+              const text = Array.isArray(output.data['text/plain']) 
+                ? output.data['text/plain'].join('')
+                : output.data['text/plain'];
+              outputText += `\\n${text}`;
+            }
+          });
+        }
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: outputText
+          }
+        ]
+      };
+      
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error executing cell: ${error.message}`
+          }
+        ],
+        isError: true
+      };
+    }
+  }
+
+  async addCell(notebookPath, source = '', cellType = 'code', position = null) {
+    const notebook = await this.readNotebook(notebookPath);
+    
+    // If position not specified, add at the end
+    const insertPosition = position !== null ? position : notebook.cells.length;
+    
+    return await this.insertCell(notebookPath, insertPosition, cellType, source);
+  }
+
+  async editCell(notebookPath, cellId, newSource) {
+    const notebook = await this.readNotebook(notebookPath);
+    
+    // Find cell by ID or treat as index
+    let cellIndex = -1;
+    
+    if (typeof cellId === 'string') {
+      // Search by cell ID
+      cellIndex = notebook.cells.findIndex(c => c.id === cellId);
+      if (cellIndex === -1) {
+        throw new Error(`Cell with ID '${cellId}' not found`);
+      }
+    } else {
+      // Treat as index
+      cellIndex = cellId;
+    }
+    
+    return await this.editCellSource(notebookPath, cellIndex, newSource);
+  }
+
+  // Cleanup method to dispose kernel sessions
+  async cleanup() {
+    for (const [notebookPath, session] of this.kernelSessions) {
+      try {
+        if (session && !session.isDisposed) {
+          await session.dispose();
+          console.error(`[Jupyter Handler] Disposed session for ${notebookPath}`);
+        }
+      } catch (error) {
+        console.error(`[Jupyter Handler] Error disposing session for ${notebookPath}:`, error.message);
+      }
+    }
+    this.kernelSessions.clear();
   }
 }

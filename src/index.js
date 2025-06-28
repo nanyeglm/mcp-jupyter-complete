@@ -220,6 +220,90 @@ class JupyterCompleteServer {
               required: ["notebook_path", "operations"]
             }
           },
+          // Kernel execution tools
+          {
+            name: "read_notebook_with_outputs",
+            description: "Read a Jupyter notebook including cell outputs",
+            inputSchema: {
+              type: "object",
+              properties: {
+                notebook_path: {
+                  type: "string",
+                  description: "Absolute path to the Jupyter notebook file"
+                }
+              },
+              required: ["notebook_path"]
+            }
+          },
+          {
+            name: "execute_cell",
+            description: "Execute a specific cell in the notebook using a Jupyter kernel",
+            inputSchema: {
+              type: "object",
+              properties: {
+                notebook_path: {
+                  type: "string",
+                  description: "Absolute path to the Jupyter notebook file"
+                },
+                cell_id: {
+                  type: ["string", "integer"],
+                  description: "Cell ID or zero-based index of the cell to execute"
+                }
+              },
+              required: ["notebook_path", "cell_id"]
+            }
+          },
+          {
+            name: "add_cell",
+            description: "Add a new cell to the notebook",
+            inputSchema: {
+              type: "object",
+              properties: {
+                notebook_path: {
+                  type: "string",
+                  description: "Absolute path to the Jupyter notebook file"
+                },
+                source: {
+                  type: "string",
+                  default: "",
+                  description: "Initial source code/content for the cell"
+                },
+                cell_type: {
+                  type: "string",
+                  enum: ["code", "markdown", "raw"],
+                  default: "code",
+                  description: "Type of cell to create"
+                },
+                position: {
+                  type: "integer",
+                  description: "Position to insert the cell (defaults to end if not specified)"
+                }
+              },
+              required: ["notebook_path"]
+            }
+          },
+          {
+            name: "edit_cell",
+            description: "Edit the source code of a specific cell by ID or index",
+            inputSchema: {
+              type: "object",
+              properties: {
+                notebook_path: {
+                  type: "string",
+                  description: "Absolute path to the Jupyter notebook file"
+                },
+                cell_id: {
+                  type: ["string", "integer"],
+                  description: "Cell ID or zero-based index of the cell to edit"
+                },
+                new_source: {
+                  type: "string",
+                  description: "New source code for the cell"
+                }
+              },
+              required: ["notebook_path", "cell_id", "new_source"]
+            }
+          },
           // VS Code integration
           {
             name: "trigger_vscode_reload",
@@ -288,6 +372,27 @@ class JupyterCompleteServer {
               args.operations
             );
           
+          case "read_notebook_with_outputs":
+            return await this.jupyterHandler.readNotebookWithOutputs(args.notebook_path);
+          
+          case "execute_cell":
+            return await this.jupyterHandler.executeCell(args.notebook_path, args.cell_id);
+          
+          case "add_cell":
+            return await this.jupyterHandler.addCell(
+              args.notebook_path,
+              args.source,
+              args.cell_type,
+              args.position
+            );
+          
+          case "edit_cell":
+            return await this.jupyterHandler.editCell(
+              args.notebook_path,
+              args.cell_id,
+              args.new_source
+            );
+          
           case "trigger_vscode_reload":
             return await this.vscodeIntegration.triggerReload(args.notebook_path);
           
@@ -314,6 +419,13 @@ class JupyterCompleteServer {
     };
 
     process.on('SIGINT', async () => {
+      await this.jupyterHandler.cleanup();
+      await this.server.close();
+      process.exit(0);
+    });
+    
+    process.on('SIGTERM', async () => {
+      await this.jupyterHandler.cleanup();
       await this.server.close();
       process.exit(0);
     });
