@@ -14,9 +14,20 @@ export class JupyterHandler {
 
   async initializeServices() {
     try {
-      // Set up minimal page config for Jupyter services
-      PageConfig.setOption('baseUrl', 'http://localhost:8888/');
-      PageConfig.setOption('wsUrl', 'ws://localhost:8888/');
+      // Get configuration from environment variables
+      const baseUrl = process.env.JUPYTER_URL || 'http://localhost:8888/';
+      const token = process.env.JUPYTER_PASSWORD || process.env.JUPYTER_TOKEN || '';
+      
+      // Ensure baseUrl ends with /
+      const normalizedBaseUrl = baseUrl.endsWith('/') ? baseUrl : baseUrl + '/';
+      const wsUrl = normalizedBaseUrl.replace('http://', 'ws://').replace('https://', 'wss://');
+      
+      // Set up page config for Jupyter services with token
+      PageConfig.setOption('baseUrl', normalizedBaseUrl);
+      PageConfig.setOption('wsUrl', wsUrl);
+      if (token) {
+        PageConfig.setOption('token', token);
+      }
       
       // Create service manager
       this.serviceManager = new ServiceManager();
