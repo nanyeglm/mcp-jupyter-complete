@@ -8,8 +8,10 @@ export class JupyterHandler {
     this.supportedCellTypes = ['code', 'markdown', 'raw'];
     this.kernelManager = null;
     this.sessionManager = null;
+    this.serviceManager = null;
     this.kernelSessions = new Map(); // Map notebook paths to kernel sessions
-    this.initializeServices();
+    this.servicesInitialized = false;
+    this.initializationPromise = this.initializeServices();
   }
 
   async initializeServices() {
@@ -17,33 +19,43 @@ export class JupyterHandler {
       // Get configuration from environment variables
       const baseUrl = process.env.JUPYTER_URL || 'http://localhost:8888/';
       const token = process.env.JUPYTER_PASSWORD || process.env.JUPYTER_TOKEN || '';
-      
+
+      console.error(`[Jupyter Handler] Initializing with baseUrl: ${baseUrl}, token: ${token ? 'provided' : 'not provided'}`);
+
       // Ensure baseUrl ends with /
       const normalizedBaseUrl = baseUrl.endsWith('/') ? baseUrl : baseUrl + '/';
       const wsUrl = normalizedBaseUrl.replace('http://', 'ws://').replace('https://', 'wss://');
-      
+
       // Set up page config for Jupyter services with token
       PageConfig.setOption('baseUrl', normalizedBaseUrl);
       PageConfig.setOption('wsUrl', wsUrl);
       if (token) {
         PageConfig.setOption('token', token);
       }
-      
-      // Create service manager
+
+      // Create service manager and wait for it to be ready
       this.serviceManager = new ServiceManager();
+      await this.serviceManager.ready;
+
       this.kernelManager = this.serviceManager.kernels;
       this.sessionManager = this.serviceManager.sessions;
-      
-      console.error('[Jupyter Handler] Services initialized');
+      this.servicesInitialized = true;
+
+      console.error('[Jupyter Handler] Services initialized and ready');
     } catch (error) {
       console.error('[Jupyter Handler] Failed to initialize services:', error.message);
+      console.error('[Jupyter Handler] Error details:', error);
+      this.servicesInitialized = false;
       // Continue without kernel support if initialization fails
     }
   }
 
   async getKernelSession(notebookPath) {
-    if (!this.sessionManager) {
-      throw new Error('Jupyter services not initialized. Please ensure Jupyter server is running.');
+    // Wait for services to be initialized
+    await this.initializationPromise;
+
+    if (!this.servicesInitialized || !this.sessionManager) {
+      throw new Error('Jupyter services not initialized. Please ensure Jupyter server is running and accessible.');
     }
 
     // Check if we already have a session for this notebook
@@ -57,21 +69,46 @@ export class JupyterHandler {
       }
     }
 
+    // Try to find existing session for this notebook
     try {
-      // Create a new session
-      const session = await this.sessionManager.startNew({
-        path: notebookPath,
-        type: 'notebook',
-        name: path.basename(notebookPath),
-        kernel: { name: 'python3' }
-      });
-
-      this.kernelSessions.set(notebookPath, session);
-      console.error(`[Jupyter Handler] Created new kernel session for ${notebookPath}`);
-      return session;
+      const existingSessions = await this.sessionManager.refreshRunning();
+      const existingSession = existingSessions.find(s => s.path === notebookPath);
+      if (existingSession) {
+        this.kernelSessions.set(notebookPath, existingSession);
+        console.error(`[Jupyter Handler] Found existing session for ${notebookPath}`);
+        return existingSession;
+      }
     } catch (error) {
-      throw new Error(`Failed to create kernel session: ${error.message}`);
+      console.error(`[Jupyter Handler] Error checking existing sessions: ${error.message}`);
     }
+
+    // Try to create a new session with fallback kernel names
+    const kernelNames = [
+      process.env.JUPYTER_KERNEL_NAME || 'mcp-jupyter-complete',
+      'python3',
+      'python'
+    ];
+
+    for (const kernelName of kernelNames) {
+      try {
+        console.error(`[Jupyter Handler] Attempting to create session with kernel: ${kernelName}`);
+        const session = await this.sessionManager.startNew({
+          path: notebookPath,
+          type: 'notebook',
+          name: path.basename(notebookPath),
+          kernel: { name: kernelName }
+        });
+
+        this.kernelSessions.set(notebookPath, session);
+        console.error(`[Jupyter Handler] Created new kernel session for ${notebookPath} with kernel ${kernelName}`);
+        return session;
+      } catch (error) {
+        console.error(`[Jupyter Handler] Failed to create session with kernel ${kernelName}: ${error.message}`);
+        continue;
+      }
+    }
+
+    throw new Error(`Failed to create kernel session with any available kernel. Please ensure a Jupyter kernel is available.`);
   }
 
   async readNotebook(notebookPath) {
@@ -108,7 +145,7 @@ export class JupyterHandler {
     const cellsInfo = notebook.cells.map((cell, index) => {
       const source = Array.isArray(cell.source) ? cell.source.join('') : cell.source;
       const preview = source.length > 100 ? source.substring(0, 100) + '...' : source;
-      
+
       return {
         index,
         type: cell.cell_type,
@@ -120,11 +157,10 @@ export class JupyterHandler {
       content: [
         {
           type: "text",
-          text: `Notebook: ${notebookPath}\nTotal cells: ${cellsInfo.length}\n\n${
-            cellsInfo.map(cell => 
-              `[${cell.index}] ${cell.type}: ${cell.preview}`
-            ).join('\n')
-          }`
+          text: `Notebook: ${notebookPath}\nTotal cells: ${cellsInfo.length}\n\n${cellsInfo.map(cell =>
+            `[${cell.index}] ${cell.type}: ${cell.preview}`
+          ).join('\n')
+            }`
         }
       ]
     };
@@ -133,10 +169,10 @@ export class JupyterHandler {
   async getCellSource(notebookPath, cellIndex) {
     const notebook = await this.readNotebook(notebookPath);
     this.validateCellIndex(notebook.cells, cellIndex);
-    
+
     const cell = notebook.cells[cellIndex];
     const source = Array.isArray(cell.source) ? cell.source.join('') : cell.source;
-    
+
     return {
       content: [
         {
@@ -150,7 +186,7 @@ export class JupyterHandler {
   async editCellSource(notebookPath, cellIndex, newSource) {
     const notebook = await this.readNotebook(notebookPath);
     this.validateCellIndex(notebook.cells, cellIndex);
-    
+
     // Convert string to array format - each line should end with \n except the last
     const lines = newSource.split('\n');
     const sourceArray = lines.map((line, index) => {
@@ -163,15 +199,15 @@ export class JupyterHandler {
         return line + '\n';
       }
     });
-    
+
     // Remove empty last element if original ended with \n
     if (sourceArray.length > 1 && sourceArray[sourceArray.length - 1] === '') {
       sourceArray.pop();
     }
-    
+
     notebook.cells[cellIndex].source = sourceArray;
     await this.writeNotebook(notebookPath, notebook);
-    
+
     return {
       content: [
         {
@@ -185,11 +221,11 @@ export class JupyterHandler {
   async insertCell(notebookPath, position, cellType = 'code', source = '') {
     const notebook = await this.readNotebook(notebookPath);
     this.validateCellType(cellType);
-    
+
     if (position < 0 || position > notebook.cells.length) {
       throw new Error(`Invalid position ${position}. Must be between 0 and ${notebook.cells.length}`);
     }
-    
+
     // Convert string to array format - each line should end with \n except the last
     let sourceArray;
     if (!source) {
@@ -203,27 +239,27 @@ export class JupyterHandler {
           return line + '\n';
         }
       });
-      
+
       // Remove empty last element if original ended with \n
       if (sourceArray.length > 1 && sourceArray[sourceArray.length - 1] === '') {
         sourceArray.pop();
       }
     }
-    
+
     const newCell = {
       cell_type: cellType,
       metadata: {},
       source: sourceArray
     };
-    
+
     if (cellType === 'code') {
       newCell.execution_count = null;
       newCell.outputs = [];
     }
-    
+
     notebook.cells.splice(position, 0, newCell);
     await this.writeNotebook(notebookPath, notebook);
-    
+
     return {
       content: [
         {
@@ -237,14 +273,14 @@ export class JupyterHandler {
   async deleteCell(notebookPath, cellIndex) {
     const notebook = await this.readNotebook(notebookPath);
     this.validateCellIndex(notebook.cells, cellIndex);
-    
+
     if (notebook.cells.length === 1) {
       throw new Error("Cannot delete the last remaining cell in the notebook");
     }
-    
+
     notebook.cells.splice(cellIndex, 1);
     await this.writeNotebook(notebookPath, notebook);
-    
+
     return {
       content: [
         {
@@ -258,15 +294,15 @@ export class JupyterHandler {
   async moveCell(notebookPath, fromIndex, toIndex) {
     const notebook = await this.readNotebook(notebookPath);
     this.validateCellIndex(notebook.cells, fromIndex);
-    
+
     if (toIndex < 0 || toIndex >= notebook.cells.length) {
       throw new Error(`Invalid target index ${toIndex}. Must be between 0 and ${notebook.cells.length - 1}`);
     }
-    
+
     const [movedCell] = notebook.cells.splice(fromIndex, 1);
     notebook.cells.splice(toIndex, 0, movedCell);
     await this.writeNotebook(notebookPath, notebook);
-    
+
     return {
       content: [
         {
@@ -281,10 +317,10 @@ export class JupyterHandler {
     const notebook = await this.readNotebook(notebookPath);
     this.validateCellIndex(notebook.cells, cellIndex);
     this.validateCellType(newType);
-    
+
     const cell = notebook.cells[cellIndex];
     const oldType = cell.cell_type;
-    
+
     if (oldType === newType) {
       return {
         content: [
@@ -295,10 +331,10 @@ export class JupyterHandler {
         ]
       };
     }
-    
+
     // Convert cell type
     cell.cell_type = newType;
-    
+
     // Handle type-specific properties
     if (newType === 'code') {
       cell.execution_count = null;
@@ -308,9 +344,9 @@ export class JupyterHandler {
       delete cell.execution_count;
       delete cell.outputs;
     }
-    
+
     await this.writeNotebook(notebookPath, notebook);
-    
+
     return {
       content: [
         {
@@ -325,14 +361,14 @@ export class JupyterHandler {
     const notebook = await this.readNotebook(notebookPath);
     let successCount = 0;
     const errors = [];
-    
+
     // Sort operations by index in descending order for deletions
     const sortedOps = operations.sort((a, b) => {
       if (a.type === 'delete' && b.type !== 'delete') return -1;
       if (a.type !== 'delete' && b.type === 'delete') return 1;
       return b.cell_index - a.cell_index;
     });
-    
+
     for (const op of sortedOps) {
       try {
         switch (op.type) {
@@ -349,21 +385,21 @@ export class JupyterHandler {
                 return line + '\n';
               }
             });
-            
+
             // Remove empty last element if original ended with \n
             if (sourceArray.length > 1 && sourceArray[sourceArray.length - 1] === '') {
               sourceArray.pop();
             }
             notebook.cells[op.cell_index].source = sourceArray;
             break;
-            
+
           case 'delete':
             if (op.cell_index < 0 || op.cell_index >= notebook.cells.length) {
               throw new Error(`Invalid cell index ${op.cell_index}`);
             }
             notebook.cells.splice(op.cell_index, 1);
             break;
-            
+
           case 'convert':
             if (op.cell_index < 0 || op.cell_index >= notebook.cells.length) {
               throw new Error(`Invalid cell index ${op.cell_index}`);
@@ -379,7 +415,7 @@ export class JupyterHandler {
               delete cell.outputs;
             }
             break;
-            
+
           default:
             throw new Error(`Unknown operation type: ${op.type}`);
         }
@@ -388,17 +424,17 @@ export class JupyterHandler {
         errors.push(`Operation ${op.type} on cell ${op.cell_index}: ${error.message}`);
       }
     }
-    
+
     await this.writeNotebook(notebookPath, notebook);
-    
+
     const resultText = [
       `Bulk operation completed: ${successCount}/${operations.length} operations successful`
     ];
-    
+
     if (errors.length > 0) {
       resultText.push(`\nErrors:\n${errors.join('\n')}`);
     }
-    
+
     return {
       content: [
         {
@@ -411,15 +447,15 @@ export class JupyterHandler {
 
   async readNotebookWithOutputs(notebookPath) {
     const notebook = await this.readNotebook(notebookPath);
-    
+
     const cellsContent = notebook.cells.map((cell, index) => {
       const source = Array.isArray(cell.source) ? cell.source.join('') : cell.source;
       let content = `Cell with ID: ${cell.id || index}\n${source}`;
-      
+
       // Add outputs if it's a code cell with outputs
       if (cell.cell_type === 'code' && cell.outputs && cell.outputs.length > 0) {
         content += '\nOutput of cell ' + (cell.id || index) + ':';
-        
+
         for (const output of cell.outputs) {
           if (output.output_type === 'stream') {
             const text = Array.isArray(output.text) ? output.text.join('') : output.text;
@@ -427,7 +463,7 @@ export class JupyterHandler {
           } else if (output.output_type === 'execute_result' || output.output_type === 'display_data') {
             if (output.data) {
               if (output.data['text/plain']) {
-                const text = Array.isArray(output.data['text/plain']) 
+                const text = Array.isArray(output.data['text/plain'])
                   ? output.data['text/plain'].join('')
                   : output.data['text/plain'];
                 content += '\n' + text;
@@ -441,7 +477,7 @@ export class JupyterHandler {
           }
         }
       }
-      
+
       return content;
     });
 
@@ -458,11 +494,11 @@ export class JupyterHandler {
   async executeCell(notebookPath, cellId) {
     try {
       const notebook = await this.readNotebook(notebookPath);
-      
+
       // Find cell by ID or index
       let cellIndex = -1;
       let cell = null;
-      
+
       if (typeof cellId === 'string') {
         // Search by cell ID
         cellIndex = notebook.cells.findIndex(c => c.id === cellId);
@@ -474,9 +510,9 @@ export class JupyterHandler {
         cellIndex = cellId;
         this.validateCellIndex(notebook.cells, cellIndex);
       }
-      
+
       cell = notebook.cells[cellIndex];
-      
+
       if (cell.cell_type !== 'code') {
         throw new Error(`Cell ${cellId} is not a code cell (type: ${cell.cell_type})`);
       }
@@ -491,7 +527,7 @@ export class JupyterHandler {
 
       // Get cell source
       const source = Array.isArray(cell.source) ? cell.source.join('') : cell.source;
-      
+
       if (!source.trim()) {
         return {
           content: [
@@ -510,13 +546,13 @@ export class JupyterHandler {
 
       // Collect outputs
       future.onIOPub = (msg) => {
-        if (msg.header.msg_type === 'execute_result' || 
-            msg.header.msg_type === 'display_data' ||
-            msg.header.msg_type === 'stream' ||
-            msg.header.msg_type === 'error') {
+        if (msg.header.msg_type === 'execute_result' ||
+          msg.header.msg_type === 'display_data' ||
+          msg.header.msg_type === 'stream' ||
+          msg.header.msg_type === 'error') {
           outputs.push(msg.content);
         }
-        
+
         if (msg.header.msg_type === 'execute_input') {
           executionCount = msg.content.execution_count;
         }
@@ -524,7 +560,7 @@ export class JupyterHandler {
 
       // Wait for execution to complete
       const reply = await future.done;
-      
+
       // Update cell in notebook
       cell.execution_count = executionCount;
       cell.outputs = outputs.map(output => {
@@ -536,7 +572,7 @@ export class JupyterHandler {
           const notebookOutput = {
             output_type: reply.content.status === 'error' ? 'error' : 'execute_result'
           };
-          
+
           if (output.data) {
             notebookOutput.data = output.data;
             notebookOutput.metadata = output.metadata || {};
@@ -546,7 +582,7 @@ export class JupyterHandler {
             notebookOutput.name = 'stdout';
             notebookOutput.text = output.text;
           }
-          
+
           return notebookOutput;
         }
       });
@@ -556,19 +592,19 @@ export class JupyterHandler {
 
       // Format output for display
       let outputText = `Executed cell ${cellId}\n`;
-      
+
       if (reply.content.status === 'error') {
         outputText += `Error: ${reply.content.ename}: ${reply.content.evalue}`;
       } else {
         outputText += `Execution completed successfully`;
-        
+
         if (outputs.length > 0) {
           outputText += '\n\nOutputs:';
-          outputs.forEach((output, i) => {
+          outputs.forEach((output) => {
             if (output.text) {
               outputText += `\n${Array.isArray(output.text) ? output.text.join('') : output.text}`;
             } else if (output.data && output.data['text/plain']) {
-              const text = Array.isArray(output.data['text/plain']) 
+              const text = Array.isArray(output.data['text/plain'])
                 ? output.data['text/plain'].join('')
                 : output.data['text/plain'];
               outputText += `\n${text}`;
@@ -585,7 +621,7 @@ export class JupyterHandler {
           }
         ]
       };
-      
+
     } catch (error) {
       return {
         content: [
@@ -601,19 +637,19 @@ export class JupyterHandler {
 
   async addCell(notebookPath, source = '', cellType = 'code', position = null) {
     const notebook = await this.readNotebook(notebookPath);
-    
+
     // If position not specified, add at the end
     const insertPosition = position !== null ? position : notebook.cells.length;
-    
+
     return await this.insertCell(notebookPath, insertPosition, cellType, source);
   }
 
   async editCell(notebookPath, cellId, newSource) {
     const notebook = await this.readNotebook(notebookPath);
-    
+
     // Find cell by ID or treat as index
     let cellIndex = -1;
-    
+
     if (typeof cellId === 'string') {
       // Search by cell ID
       cellIndex = notebook.cells.findIndex(c => c.id === cellId);
@@ -624,7 +660,7 @@ export class JupyterHandler {
       // Treat as index
       cellIndex = cellId;
     }
-    
+
     return await this.editCellSource(notebookPath, cellIndex, newSource);
   }
 

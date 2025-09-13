@@ -16,7 +16,7 @@
 
 ### 1. 环境准备
 
-确认 conda 环境：
+#### 1.1 确认 conda 环境
 
 ```bash
 conda env list
@@ -24,6 +24,56 @@ conda env list
 # base                  *  /home/cpu/miniforge3
 # gym                      /home/cpu/miniforge3/envs/gym
 # phalp                    /home/cpu/miniforge3/envs/phalp
+```
+
+#### 1.2 创建专用的 mcp-jupyter-complete 虚拟环境
+
+为了避免污染 base 环境，我们创建一个专门的 conda 虚拟环境：
+
+```bash
+# 创建新的 conda 环境
+conda create -n mcp-jupyter-complete python=3.10 -y
+
+# 激活环境
+conda activate mcp-jupyter-complete
+
+# 安装 pandoc (用于格式转换)
+conda install pandoc -y
+
+# 安装 nbconvert (用于 notebook 转换)
+conda install nbconvert -y
+
+# 安装 jupyter 相关包
+conda install jupyter jupyter_client jupyter_core -y
+
+# 安装其他必要的包
+conda install ipykernel ipywidgets -y
+
+# 安装数据科学常用包（可选，但推荐）
+conda install numpy pandas matplotlib seaborn -y
+
+# 验证安装
+jupyter --version
+pandoc --version
+jupyter-nbconvert --version
+
+# 将环境注册为 Jupyter kernel
+python -m ipykernel install --user --name mcp-jupyter-complete --display-name "MCP Jupyter Complete"
+```
+
+#### 1.3 验证环境创建
+
+```bash
+# 检查新环境
+conda env list
+# 应该看到新增的：
+# mcp-jupyter-complete     /home/cpu/miniforge3/envs/mcp-jupyter-complete
+
+# 检查已安装的包
+conda list
+
+# 检查 Jupyter kernels
+jupyter kernelspec list
 ```
 
 ### 2. 克隆和安装 MCP Jupyter Complete
@@ -46,27 +96,38 @@ npm link
 创建用户级别的 systemd 服务，确保 Jupyter 始终运行：
 
 ```bash
+# 创建 systemd 用户目录（如果不存在）
+mkdir -p ~/.config/systemd/user
+
+# 编辑服务配置文件
 nano ~/.config/systemd/user/jupyter.service
 ```
 
-服务配置内容：
+服务配置内容（使用专用的 mcp-jupyter-complete 环境）：
 
 ````ini path=~/.config/systemd/user/jupyter.service mode=EDIT
 [Unit]
-Description=Jupyter Notebook Server
+Description=Jupyter Notebook Server (MCP Jupyter Complete Environment)
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/home/cpu/miniforge3/bin/conda run -n base jupyter notebook --no-browser --ip=127.0.0.1 --port=8888 --NotebookApp.token=ac87b951248e6cc6d5c58af49c043fe55412c3928f7df359
+ExecStart=/home/cpu/miniforge3/bin/conda run -n mcp-jupyter-complete jupyter notebook --no-browser --ip=127.0.0.1 --port=8888 --NotebookApp.token=ac87b951248e6cc6d5c58af49c043fe55412c3928f7df359
 WorkingDirectory=/home/cpu
 Restart=always
 Environment="JUPYTER_CONFIG_DIR=/home/cpu/.jupyter"
 Environment="JUPYTER_RUNTIME_DIR=/home/cpu/.local/share/jupyter/runtime"
+Environment="CONDA_DEFAULT_ENV=mcp-jupyter-complete"
 
 [Install]
 WantedBy=default.target
 ````
+
+#### 3.1 配置说明
+
+- **ExecStart**: 使用 `conda run -n mcp-jupyter-complete` 在专用环境中启动 Jupyter
+- **Environment**: 添加了 `CONDA_DEFAULT_ENV` 环境变量
+- **Description**: 更新了描述以反映使用的环境
 
 ### 4. 启用和启动服务
 
@@ -82,9 +143,14 @@ systemctl --user start jupyter
 
 # 检查服务状态
 systemctl --user status jupyter
+
+# 查看服务日志（如果有问题）
+journalctl --user -u jupyter -f
 ```
 
 ### 5. 验证 Jupyter 服务
+
+#### 5.1 测试 API 连接
 
 ```bash
 # 测试 API 连接
@@ -92,6 +158,33 @@ curl -v "http://localhost:8888/api/sessions?token=ac87b951248e6cc6d5c58af49c043f
 ```
 
 应该返回 `200 OK` 和空的会话列表 `[]`。
+
+#### 5.2 验证环境和 kernels
+
+```bash
+# 手动测试 conda 环境中的 Jupyter
+conda activate mcp-jupyter-complete
+jupyter --version
+
+# 检查可用的 kernels
+jupyter kernelspec list
+
+# 测试 notebook 启动（可选）
+# jupyter notebook --no-browser --ip=127.0.0.1 --port=8889 --NotebookApp.token=test
+```
+
+#### 5.3 环境故障排除
+
+如果服务启动失败，可以手动测试：
+
+```bash
+# 手动启动 Jupyter 进行调试
+conda activate mcp-jupyter-complete
+jupyter notebook --no-browser --ip=127.0.0.1 --port=8888 --NotebookApp.token=ac87b951248e6cc6d5c58af49c043fe55412c3928f7df359
+
+# 检查环境中的包
+conda list | grep jupyter
+```
 
 ### 6. 修改 MCP 服务器支持环境变量
 
@@ -142,7 +235,125 @@ JUPYTER_URL=http://localhost:8888 JUPYTER_TOKEN=ac87b951248e6cc6d5c58af49c043fe5
 MCP Jupyter Complete server running on stdio
 ```
 
-## 第二部分：客户端配置
+## 第二部分：环境管理和最佳实践
+
+### 1. Conda 环境管理
+
+#### 1.1 环境维护命令
+
+```bash
+# 激活环境
+conda activate mcp-jupyter-complete
+
+# 更新环境中的所有包
+conda update --all
+
+# 查看环境信息
+conda info --envs
+conda list
+
+# 导出环境配置（用于备份或复制）
+conda env export > mcp-jupyter-complete.yml
+
+# 从配置文件创建环境（在其他机器上）
+conda env create -f mcp-jupyter-complete.yml
+
+# 删除环境（如果需要重新创建）
+conda env remove -n mcp-jupyter-complete
+```
+
+#### 1.2 添加额外的包
+
+根据需要，可以在环境中安装额外的包：
+
+```bash
+# 激活环境
+conda activate mcp-jupyter-complete
+
+# 安装数据科学常用包
+conda install numpy pandas matplotlib seaborn scikit-learn -y
+
+# 安装深度学习包（可选）
+conda install pytorch torchvision torchaudio -c pytorch -y
+
+# 安装其他有用的包
+conda install requests beautifulsoup4 lxml -y
+conda install plotly bokeh -y
+
+# 使用 pip 安装 conda 中没有的包
+pip install jupyterlab-widgets
+pip install ipywidgets
+```
+
+#### 1.3 环境隔离的好处
+
+使用专用的 conda 环境有以下优势：
+
+1. **依赖隔离**: 避免包版本冲突
+2. **环境复制**: 可以轻松在其他机器上复制相同环境
+3. **版本控制**: 可以维护多个不同版本的环境
+4. **清理简单**: 可以完全删除环境而不影响其他项目
+5. **权限管理**: 避免在 base 环境中安装可能有风险的包
+
+### 2. Jupyter 配置优化
+
+#### 2.1 创建专用的 Jupyter 配置
+
+```bash
+# 激活环境
+conda activate mcp-jupyter-complete
+
+# 生成 Jupyter 配置文件
+jupyter notebook --generate-config
+
+# 编辑配置文件
+nano ~/.jupyter/jupyter_notebook_config.py
+```
+
+推荐的配置选项：
+
+```python
+# ~/.jupyter/jupyter_notebook_config.py
+
+# 设置默认端口
+c.NotebookApp.port = 8888
+
+# 设置 IP 地址
+c.NotebookApp.ip = '127.0.0.1'
+
+# 禁用浏览器自动打开
+c.NotebookApp.open_browser = False
+
+# 设置工作目录
+c.NotebookApp.notebook_dir = '/home/cpu/notebooks'
+
+# 启用扩展
+c.NotebookApp.nbserver_extensions = {
+    'jupyter_nbextensions_configurator': True,
+}
+
+# 设置最大缓冲区大小
+c.NotebookApp.max_buffer_size = 2**20
+
+# 允许 root 用户运行（如果需要）
+# c.NotebookApp.allow_root = True
+```
+
+#### 2.2 创建专用的工作目录
+
+```bash
+# 创建 notebooks 目录
+mkdir -p /home/cpu/notebooks/mcp-jupyter-complete
+
+# 设置权限
+chmod 755 /home/cpu/notebooks/mcp-jupyter-complete
+
+# 创建示例 notebook
+cd /home/cpu/notebooks/mcp-jupyter-complete
+cp /mnt/data/mcp/mcp-jupyter-complete/examples/demo-notebook.ipynb ./
+```
+
+## 第三部分：客户端配置
 
 ### 通用配置参数说明
 
@@ -494,7 +705,82 @@ insert_cell({
 
 ## 故障排除
 
-### 1. SSH 连接问题
+### 1. Conda 环境问题
+
+#### 1.1 环境不存在或无法激活
+
+```bash
+# 检查环境是否存在
+conda env list
+
+# 如果环境不存在，重新创建
+conda create -n mcp-jupyter-complete python=3.9 -y
+conda activate mcp-jupyter-complete
+
+# 重新安装必要的包
+conda install jupyter jupyter_client jupyter_core pandoc nbconvert -y
+```
+
+#### 1.2 包缺失或版本冲突
+
+```bash
+# 激活环境
+conda activate mcp-jupyter-complete
+
+# 检查包列表
+conda list | grep jupyter
+
+# 如果包缺失，重新安装
+conda install jupyter jupyter_client jupyter_core -y
+
+# 解决版本冲突
+conda update --all
+```
+
+#### 1.3 Jupyter kernel 问题
+
+```bash
+# 检查可用的 kernels
+jupyter kernelspec list
+
+# 如果 mcp-jupyter-complete kernel 不存在，重新注册
+conda activate mcp-jupyter-complete
+python -m ipykernel install --user --name mcp-jupyter-complete --display-name "MCP Jupyter Complete"
+
+# 删除旧的 kernel（如果需要）
+jupyter kernelspec remove mcp-jupyter-complete
+```
+
+### 2. Systemd 服务问题
+
+#### 2.1 服务启动失败
+
+```bash
+# 检查服务状态
+systemctl --user status jupyter
+
+# 查看详细日志
+journalctl --user -u jupyter -f
+
+# 手动测试启动命令
+conda activate mcp-jupyter-complete
+jupyter notebook --no-browser --ip=127.0.0.1 --port=8888 --NotebookApp.token=ac87b951248e6cc6d5c58af49c043fe55412c3928f7df359
+```
+
+#### 2.2 环境变量问题
+
+确保 systemd 服务文件中的路径正确：
+
+```bash
+# 检查 conda 路径
+which conda
+# 应该是: /home/cpu/miniforge3/bin/conda
+
+# 更新服务文件中的路径（如果需要）
+nano ~/.config/systemd/user/jupyter.service
+```
+
+### 3. SSH 连接问题
 
 ```bash
 # 测试 SSH 连接
@@ -503,9 +789,12 @@ ssh cpu@{ubuntu-server-ip} "echo 'SSH connection successful'"
 # 配置免密登录
 ssh-keygen -t rsa -b 4096
 ssh-copy-id cpu@{ubuntu-server-ip}
+
+# 测试环境激活
+ssh cpu@{ubuntu-server-ip} "conda activate mcp-jupyter-complete && python --version"
 ```
 
-### 2. 环境变量问题
+### 4. 环境变量问题
 
 确保所有客户端配置中都包含正确的环境变量：
 
@@ -514,7 +803,7 @@ JUPYTER_URL=http://localhost:8888
 JUPYTER_TOKEN=ac87b951248e6cc6d5c58af49c043fe55412c3928f7df359
 ```
 
-### 3. 端口和网络问题
+### 5. 端口和网络问题
 
 ```bash
 # 检查端口监听
@@ -522,9 +811,12 @@ netstat -tlnp | grep 8888
 
 # 测试本地连接
 curl http://localhost:8888
+
+# 如果端口被占用，更换端口
+sudo lsof -i :8888
 ```
 
-### 4. 客户端特定问题
+### 6. 客户端特定问题
 
 - **Claude Desktop**: 检查 `~/.claude.json` 格式
 - **Continue.dev**: 检查 `~/.continue/config.json` 格式
@@ -542,10 +834,44 @@ curl http://localhost:8888
 
 通过以上配置，你的 MCP Jupyter Complete 服务将支持：
 
-1. ✅ Claude Desktop 客户端
-2. ✅ Continue.dev VS Code 扩展
-3. ✅ Cline VS Code 扩展
-4. ✅ 自定义 Python/Node.js 客户端
-5. ✅ 任何支持 MCP 协议的客户端
+### ✅ 环境隔离和管理
+
+1. **专用 conda 环境**: `mcp-jupyter-complete` 环境完全隔离，不污染 base 环境
+2. **完整的依赖管理**: 包含 Jupyter、pandoc、nbconvert 等所有必要组件
+3. **环境可复制性**: 可以通过 `conda env export` 轻松备份和复制环境
+4. **版本控制**: 独立的环境便于管理不同版本的依赖
+
+### ✅ 客户端支持
+
+1. **Claude Desktop 客户端**: 通过 SSH 远程调用
+2. **Continue.dev VS Code 扩展**: 集成开发环境支持
+3. **Cline VS Code 扩展**: 另一个优秀的 VS Code 集成选项
+4. **自定义 Python/Node.js 客户端**: 灵活的编程接口
+5. **任何支持 MCP 协议的客户端**: 标准化的协议支持
+
+### ✅ 系统服务和自动化
+
+1. **Systemd 用户服务**: Jupyter 服务自动启动和管理
+2. **环境变量配置**: 灵活的配置管理
+3. **日志和监控**: 完整的服务状态监控
+4. **故障恢复**: 自动重启和错误处理
+
+### 🔧 最佳实践
+
+- 使用专用的 conda 环境避免依赖冲突
+- 通过 systemd 服务确保 Jupyter 始终可用
+- 使用 SSH 密钥认证提高安全性
+- 定期备份环境配置和 notebook 文件
+- 监控服务状态和日志
 
 所有客户端都能通过统一的 MCP 协议访问远程 Ubuntu 服务器上的 Jupyter notebooks，实现无缝的跨平台开发体验！
+
+### 📝 快速启动检查清单
+
+1. ✅ 创建并激活 `mcp-jupyter-complete` conda 环境
+2. ✅ 安装所有必要的包（jupyter, pandoc, nbconvert 等）
+3. ✅ 注册 Jupyter kernel
+4. ✅ 配置 systemd 服务使用正确的 conda 环境
+5. ✅ 启动并验证 Jupyter 服务
+6. ✅ 配置客户端连接
+7. ✅ 测试 MCP 工具功能
