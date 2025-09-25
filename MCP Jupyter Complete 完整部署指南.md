@@ -45,6 +45,7 @@ conda install nbconvert -y
 
 # 安装 jupyter 相关包
 conda install jupyter jupyter_client jupyter_core -y
+conda install -n mcp-jupyter-complete qtconsole
 
 # 安装其他必要的包
 conda install ipykernel ipywidgets -y
