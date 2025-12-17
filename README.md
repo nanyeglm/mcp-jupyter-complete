@@ -2,9 +2,36 @@
 
 A comprehensive Model Context Protocol (MCP) server for Jupyter notebook manipulation with position-based operations and VS Code integration.
 
+> **Fork 说明**: 本仓库 fork 自 [tofunori/mcp-jupyter-complete](https://github.com/tofunori/mcp-jupyter-complete)，添加了中文部署文档。
+
+---
+
+## 📚 部署文档导航
+
+根据你的使用场景，选择合适的文档：
+
+| 场景 | 推荐文档 | 说明 |
+|------|----------|------|
+| **仅使用 mcp-jupyter-complete** | [MCP Jupyter Complete 部署指南](MCP%20Jupyter%20Complete%20部署指南.md) | 单服务完整部署，包含环境创建、服务配置、客户端设置 |
+| **同时使用两个 MCP 服务** | [Jupyter-MCP-双服务完整部署指南](Jupyter-MCP-双服务完整部署指南.md) | 同时部署 mcp-jupyter-complete 和 jupyter-mcp-server |
+
+### 两个 MCP 服务的区别
+
+| 特性 | mcp-jupyter-complete | [jupyter-mcp-server](https://github.com/nanyeglm/jupyter-mcp-server) |
+|------|---------------------|------------------|
+| **实现语言** | Node.js | Python |
+| **主要功能** | Notebook 文件编辑（Cell 增删改查） | Notebook 实时执行与交互 |
+| **是否需要 Jupyter 运行** | 可选（仅编辑文件时不需要） | 必须（需要连接 Jupyter Server） |
+| **适用场景** | 批量编辑 Notebook 结构 | 实时执行代码、查看输出 |
+
+**推荐**: 两个服务配合使用，功能互补。
+
+---
+
 ## Features
 
 ### 🎯 Position-Based Operations
+
 - **`list_cells`** - List all cells with indices and type information
 - **`get_cell_source`** - Get source code of specific cells by index
 - **`edit_cell_source`** - Edit cell content by index
@@ -12,11 +39,13 @@ A comprehensive Model Context Protocol (MCP) server for Jupyter notebook manipul
 - **`delete_cell`** - Delete cells by index with automatic reindexing
 
 ### 🚀 Enhanced Operations
+
 - **`move_cell`** - Move cells between positions
 - **`convert_cell_type`** - Convert between code/markdown/raw cells
 - **`bulk_edit_cells`** - Perform multiple operations in a single call
 
 ### 🔧 VS Code Integration
+
 - **`trigger_vscode_reload`** - Force VS Code to reload notebook files
 - File watcher support for automatic reloading
 - VS Code workspace and settings generation
@@ -25,17 +54,20 @@ A comprehensive Model Context Protocol (MCP) server for Jupyter notebook manipul
 ## Installation
 
 1. **Clone the repository:**
+
    ```bash
    git clone https://github.com/tofunori/mcp-jupyter-complete.git
    cd mcp-jupyter-complete
    ```
 
 2. **Install dependencies:**
+
    ```bash
    npm install
    ```
 
 3. **Make executable (optional):**
+
    ```bash
    npm link
    ```
@@ -148,6 +180,7 @@ For optimal VS Code integration:
 
 2. **Configure auto-reload:**
    Add to VS Code settings:
+
    ```json
    {
      "files.watcherExclude": {
@@ -189,6 +222,7 @@ For optimal VS Code integration:
 ## Cell Types
 
 Supported cell types:
+
 - **`code`** - Python/executable code cells
 - **`markdown`** - Markdown text cells  
 - **`raw`** - Raw text cells
@@ -196,6 +230,7 @@ Supported cell types:
 ## Error Handling
 
 The server provides detailed error messages for:
+
 - Invalid cell indices
 - File read/write permissions
 - Malformed notebook JSON
@@ -236,6 +271,7 @@ MIT License - see [LICENSE](LICENSE) file for details.
 ## Changelog
 
 ### v1.0.0
+
 - Initial release
 - Position-based cell operations
 - VS Code integration
